@@ -1,6 +1,6 @@
 # Vera, rebuilt: a grounded merchant assistant
 
-**Approach.** Every message comes from a **playbook**: a strategy for one trigger kind (26 kinds, plus a fallback for any kind it hasn't seen). A playbook reads the four contexts through one resolved object (`vera/context.py`), picks the angle that matters *now*, and writes one message with one ask, ending on the CTA. Every number found in the contexts, and every number a playbook derives, goes into a **fact ledger**. A validator rejects any body containing a number not in that ledger. It also rejects taboo words, preambles, a missing final CTA, more than one CTA, ALL-CAPS and over-long messages. Result: all 100 dataset triggers compose with **zero** unsupported numbers. An LLM is optional. When one is configured it only *polishes* the playbook draft, and the polished text goes back through the same validator: if it adds a fact, the draft ships instead.
+**Approach.** Every message comes from a **playbook**: a strategy for one trigger kind. That covers all 26 kinds in the dataset, plus the brief's `weather_heatwave`, `local_news_event` and `category_trend_movement`. For any kind it has never seen, a fallback surfaces the trigger's own payload (headline, numbers, linked digest item) as the reason to message now. A playbook reads the four contexts through one resolved object (`vera/context.py`) and picks the **one signal** that should drive the message. Secondary facts are held back for the follow-up, and the rationale says what was chosen and what was left out. It then writes one message with one ask, ending on the CTA. Every number found in the contexts, and every number a playbook derives, goes into a **fact ledger**. A validator rejects any body containing a number not in that ledger. It also rejects taboo words, preambles, a missing final CTA, more than one CTA, ALL-CAPS and over-long messages. Result: all 100 dataset triggers compose with **zero** unsupported numbers. An LLM is optional. When one is configured it only *polishes* the playbook draft, and the polished text goes back through the same validator: if it adds a fact, the draft ships instead.
 
 **Judgement, not templating.** Examples from the 30 test pairs:
 - **IPL match on a weekend:** recommends delivery, not dine-in, because the category digest shows weekend matches cut covers by ~12%. It also notes the merchant's BOGO only runs Tue–Thu and flags their late-delivery reviews.
@@ -26,7 +26,7 @@
 pip install -r requirements.txt
 uvicorn bot:app --host 0.0.0.0 --port 8080          # or: docker build -t vera . && docker run -p 8080:8080 vera
 python generate_submission.py                       # -> submission.jsonl (30 test pairs)
-python -m pytest tests -q                           # 40 tests: compose, grounding, conversations, API contract
+python -m pytest tests -q                           # 48 tests: compose, grounding, fresh-scenario injection, conversations, API
 python scripts/offline_judge.py all http://127.0.0.1:8080   # judge_simulator flows without an API key
 ```
 Optional LLM: set `VERA_LLM_PROVIDER` (anthropic | openai | gemini | groq | deepseek | openrouter | ollama), the provider's API key, and optionally `VERA_LLM_MODEL`. On Windows, use `127.0.0.1`, not `localhost`: `localhost` resolution alone adds seconds.

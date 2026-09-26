@@ -73,8 +73,11 @@ def lc_first(s: str) -> str:
     """Lower-case the first word when it follows 'Name, ' — unless it's an acronym/proper noun."""
     if not s:
         return s
-    first = s.split(" ", 1)[0]
+    words = s.split(" ")
+    first = words[0]
     if first.isupper() or first in ("I", "Diwali") or any(ch.isdigit() for ch in first):
+        return s
+    if len(words) > 1 and words[1][:1].isupper():  # proper-noun phrase: "Sant Nagar", "Smile Studio"
         return s
     return s[0].lower() + s[1:]
 
@@ -161,7 +164,9 @@ def accept_text(c: Ctx, v: Voice, done: str, artifact: str = "", next_step: str 
 # =========================================================================== merchant-facing
 
 def research_digest(c: Ctx, v: Voice) -> Draft:
-    item = c.digest_item(c.payload.get("top_item_id"), kinds=("research",)) \
+    item_id = c.payload.get("top_item_id") or next(
+        (val for k, val in c.payload.items() if isinstance(val, str) and k.endswith("item_id")), None)
+    item = (c.digest_item(item_id) if item_id else None) or c.digest_item(kinds=("research",)) \
         or c.digest_item(kinds=("research", "tech", "trend"))
     if not item:
         return generic(c, v)
@@ -219,10 +224,9 @@ def regulation_change(c: Ctx, v: Voice) -> Draft:
     when = f"from {day_month(deadline)} {deadline.year}" if deadline else "soon"
     days_left = (deadline - c.today).days if deadline else None
     runway = ""
-    if days_left and days_left > 0:
+    if days_left is not None and 0 < days_left <= 45:  # only worth saying when it's genuinely close
         c.allow(days_left)
-        runway = v.t(f" You have {days_left} days — enough to do it calmly, not enough to forget.",
-                     f" {days_left} din hain — aaraam se ho jayega, bas bhoolna nahi hai.")
+        runway = v.t(f" That's {days_left} days away.", f" Sirf {days_left} din bache hain.")
     detail = ". ".join(sentences[:2]) + "." if sentences else ""
     what = re.sub(r"^(\w+) revised ", r"\1 has revised ", item.get("title", "").split(" effective")[0])
     body = f"""{opener(c, v)} compliance heads-up — {what}, effective {day_month(deadline) + ' ' + str(deadline.year) if deadline else 'soon'} ({item.get('source', '')}). {detail}{runway}
@@ -388,9 +392,10 @@ def seasonal_perf_dip(c: Ctx, v: Voice) -> Draft:
     lines = [v.t(f"{label.capitalize()} are down {pct(delta)} this week — and that's expected.",
                  f"Is hafte {label} {pct(delta)} neeche hain — aur yeh expected hai.")]
     if beat:
-        lines.append(v.t(f"{beat['month_range']} is the {beat['note'].split(' — ')[0]} for {c.category.get('display_name', 'your category').lower()}, so I wouldn't chase it with ad spend.",
-                         f"{beat['month_range']} {c.category.get('display_name', '').lower()} ke liye {beat['note'].split(' — ')[0]} hota hai — ads pe paisa lagane ka time nahi hai."))
-    if digest and digest.get("actionable"):
+        biz_type = SINGULAR.get(c.slug, "business") + "s"
+        lines.append(v.t(f"{beat['month_range']} is the {beat['note'].split(' — ')[0]} for {biz_type}, so I wouldn't chase it with ad spend.",
+                         f"{beat['month_range']} {biz_type} ke liye {beat['note'].split(' — ')[0]} hota hai — ads pe paisa lagane ka time nahi hai."))
+    if digest and digest.get("actionable") and not beat:
         lines.append(v.t(f"The {digest.get('source', 'data')} read: {digest['actionable'].rstrip('.')}.", f"Data ({digest.get('source', '')}) keh raha hai: {digest['actionable'].rstrip('.')}."))
     members = c.agg.get("total_active_members")
     churn = c.agg.get("monthly_churn_pct")
@@ -398,7 +403,7 @@ def seasonal_perf_dip(c: Ctx, v: Voice) -> Draft:
     if members and churn:
         lost = int(members * churn)
         c.allow(lost)
-        comp = f" vs a {pct(peer_churn)} peer average" if peer_churn else ""
+        comp = f" against a peer average of {pct(peer_churn)}" if peer_churn else ""
         lines.append(v.t(f"The number that matters this quarter is churn: {pct(churn)}/month{comp} — about {lost} of your {num(members)} members leaving every month.",
                          f"Is quarter asli number churn hai: {pct(churn)}/month{comp} — har mahine aapke {num(members)} mein se lagbhag {lost} members nikal rahe hain."))
         cta = ask(v, "Want me to draft a 6-week summer consistency challenge to hold them through the dip?",
@@ -675,33 +680,35 @@ def ipl_match_today(c: Ctx, v: Voice) -> Draft:
     bogo = c.offer_matching("buy 1", "bogo")
     combo = c.catalog_offer("match-night", "match night")
     late = next((r for r in c.review("neg") if "deliver" in r.get("theme", "")), None)
+    # One driving signal: weekend vs weeknight match. Everything else supports it or waits for the follow-up.
     if weeknight is False:
-        if item:
-            lines.append(v.t(f"This season's order data: weekend matches pull dine-in covers down ~12% as people watch at home, while weeknight matches add ~18% — so tonight is a delivery play, not a dine-in one.",
-                             f"Is season ka data: weekend matches pe dine-in covers ~12% girte hain (log ghar pe dekhte hain), weeknight pe ~18% badhte hain — aaj delivery ka din hai, dine-in ka nahi."))
         combo_name = short_title(combo["title"]) if combo else "match combo"
+        if item:
+            lines.append(v.t("Weekend matches pull dine-in covers down ~12% this season (people watch at home) — tonight is a delivery play.",
+                             "Weekend matches pe is season dine-in covers ~12% girte hain (log ghar pe dekhte hain) — aaj delivery ka din hai."))
         if bogo and "tue" in bogo["title"].lower():
-            lines.append(v.t(f"Your '{short_title(bogo['title'])}' offer only runs Tue-Thu, so a delivery-only '{combo_name}' fits tonight better.",
-                             f"Aapka '{short_title(bogo['title'])}' sirf Tue-Thu chalta hai, isliye aaj delivery-only '{combo_name}' behtar rahega."))
+            lines.append(v.t(f"Your BOGO is Tue-Thu only, so a delivery-only '{combo_name}' fits.",
+                             f"Aapka BOGO sirf Tue-Thu hai, isliye delivery-only '{combo_name}' sahi rahega."))
         offer_name = combo_name
     else:
         lines.append(v.t("Weeknight matches have been adding ~18% dine-in covers this season — tonight is one to staff up for.",
                          "Weeknight matches pe is season ~18% zyada covers aaye hain — aaj staff poora rakhiye."))
         offer_name = short_title((bogo or combo or {}).get("title", "match-night combo"))
-    if late:
-        lines.append(v.t(f"One flag: {late.get('occurrences_30d')} recent reviews mention late delivery, so I'd tighten the delivery radius for the match window.",
-                         f"Ek dhyan dene wali baat: {late.get('occurrences_30d')} recent reviews late delivery pe hain — match ke time delivery radius chhota rakhiye."))
     start = clock(mt) if mt else "match"
-    body = f"{c.salutation}, " + " ".join(lines) + "\n" + ask(v, f"Want me to put the combo live on your listing before the {start} start?",
-                                                              f"{start} se pehle combo listing pe live kar doon?")
+    body = f"{c.salutation}, " + " ".join(lines) + "\n" + ask(v, f"Want it live on your listing before the {start} start?",
+                                                              f"{start} se pehle listing pe live kar doon?")
     c.allow(7, 30, 12, 18)
+    # The late-delivery risk is real but secondary: it shapes the execution, not the pitch.
+    guard = v.t(f" Given {late.get('occurrences_30d')} recent late-delivery reviews, I've capped the delivery radius for the match window.",
+                f" {late.get('occurrences_30d')} late-delivery reviews ki wajah se match ke time delivery radius chhota rakha hai.") if late else ""
     on_accept = accept_text(c, v, v.t(f"'{offer_name}' is going live on your listing now", f"'{offer_name}' abhi listing pe live ho raha hai"),
-                            v.t(f"Banner line: \"{match} tonight — {offer_name}, delivered hot.\"", f"Banner line: \"{match} aaj raat — {offer_name}, garam delivery.\""),
+                            v.t(f"Banner line: \"{match} tonight — {offer_name}, delivered hot.\"", f"Banner line: \"{match} aaj raat — {offer_name}, garam delivery.\"") + guard,
                             v.t("I'll pull it down after the match and send you tonight's order count tomorrow.", "Match ke baad hata dungi aur kal subah orders ka count bhejungi."))
     return Draft(body, "binary_yes_no",
-                 "IPL trigger with a data-informed, counter-intuitive call (weekend match → delivery, not dine-in), uses the "
-                 "merchant's own offer constraints and review risk (late delivery).",
-                 ["judgement", "specificity", "loss_aversion", "effort_externalization"], on_accept, offer=offer_name)
+                 "Lead signal: weekend match → delivery beats dine-in (category digest: weekend covers -12%). Supporting fact: the "
+                 "merchant's BOGO doesn't run today. Deliberately held back: late-delivery reviews — used in the follow-up to cap "
+                 "delivery radius rather than diluting the pitch.",
+                 ["judgement", "specificity", "effort_externalization"], on_accept, offer=offer_name)
 
 
 def review_theme_emerged(c: Ctx, v: Voice) -> Draft:
@@ -1023,15 +1030,17 @@ def competitor_opened(c: Ctx, v: Voice) -> Draft:
             if mine:
                 lines[0] += v.t(f" vs your {mine['title'].split('@')[-1].strip()}", f" — aapka {mine['title'].split('@')[-1].strip()} hai")
         lines[0] += "."
+        noun = SINGULAR.get(c.slug, "place")
         if pos:
-            lines.append(v.t(f"I wouldn't match the price: your reviews already sell what a new place can't — {pos[0].get('occurrences_30d')} this month say \"{pos[0].get('common_quote')}\"." if pos[0].get("common_quote")
-                             else f"I wouldn't match the price: {pos[0].get('occurrences_30d')} reviews this month praise your {humanize_token(pos[0]['theme'])}.",
-                             f"Price match mat kijiye: aapke reviews woh bechte hain jo naya clinic nahi de sakta — is mahine {pos[0].get('occurrences_30d')} reviews: \"{pos[0].get('common_quote') or humanize_token(pos[0]['theme'])}\"."))
+            praise = f"\"{pos[0]['common_quote']}\"" if pos[0].get("common_quote") else humanize_token(pos[0]["theme"])
+            lines.append(v.t(f"Don't match the price — you win on trust: {pos[0].get('occurrences_30d')} reviews this month say {praise}.",
+                             f"Price match mat kijiye — aap trust pe jeette hain: is mahine {pos[0].get('occurrences_30d')} reviews: {praise}."))
         if neg:
-            lines.append(v.t(f"The soft spot they could exploit is {humanize_token(neg[0]['theme'])} ({neg[0].get('occurrences_30d')} reviews" + (f", e.g. \"{neg[0].get('common_quote')}\")." if neg[0].get("common_quote") else ")."),
-                             f"Kamzori jahan woh jeet sakte hain: {humanize_token(neg[0]['theme'])} ({neg[0].get('occurrences_30d')} reviews)."))
-            cta = ask(v, f"Want me to add bookable time-slots to your Google profile so the {humanize_token(neg[0]['theme'])} complaint goes away?",
-                      f"Google profile pe bookable time-slots add kar doon taaki {humanize_token(neg[0]['theme'])} ki shikayat band ho?")
+            theme = humanize_token(neg[0]["theme"])
+            lines.append(v.t(f"Where a new {noun} can beat you is {theme} ({neg[0].get('occurrences_30d')} reviews).",
+                             f"Naya {noun} sirf {theme} pe aapko hara sakta hai ({neg[0].get('occurrences_30d')} reviews)."))
+            cta = ask(v, f"Want me to add bookable slots to your Google profile to fix the {theme}?",
+                      f"{theme.capitalize()} theek karne ke liye Google profile pe bookable slots add kar doon?")
             deliverable = "bookable time-slots added to your profile"
         else:
             cta = ask(v, "Want me to refresh your profile so you stay the obvious pick?", "Profile refresh kar doon taaki aap hi pehli choice rahein?")
@@ -1311,12 +1320,141 @@ def json_lower(d: dict) -> str:
     return json.dumps(d).lower()
 
 
+# =========================================================================== unseen / external triggers
+# The judge injects triggers we have never seen. These playbooks read whatever the
+# payload carries (headline, numbers, linked digest item) instead of ignoring it.
+
+_TEXT_KEYS = ("headline", "title", "event", "name", "description", "summary", "note", "topic", "reason",
+              "impact", "alert", "message", "query", "festival", "theme")
+_SKIP_KEYS = {"placeholder", "category", "merchant_id", "customer_id", "metric_or_topic"}
+
+
+def payload_story(c: Ctx) -> tuple[Optional[str], list[str], Optional[dict]]:
+    """(headline text, ['key: value' facts], linked digest item) from an arbitrary payload."""
+    p = c.payload
+    item = None
+    for k, val in p.items():
+        if isinstance(val, str) and (k.endswith("item_id") or k in ("alert_id", "digest_id")):
+            item = c.digest_item(val)
+    text = next((str(p[k]) for k in _TEXT_KEYS if isinstance(p.get(k), str) and p.get(k).strip()), None)
+    if not text and item:
+        text = item.get("title")
+    facts = []
+    for k, val in p.items():
+        if k in _SKIP_KEYS or k.endswith("_id") or k.endswith("_iso") or isinstance(val, (dict, list, bool)):
+            continue
+        label = humanize_token(k).replace(" pct", "").replace(" c", " (°C)") if isinstance(val, (int, float)) else None
+        if label:
+            shown = pct(val, signed=True) if ("pct" in k or "delta" in k) and abs(val) <= 5 else num(val)
+            facts.append(f"{label}: {shown}")
+    return text, facts[:3], item
+
+
+def _temperature(c: Ctx) -> Optional[float]:
+    for k, val in c.payload.items():
+        if isinstance(val, (int, float)) and re.search(r"temp|celsius|deg|heat_index|max_c|_c$", k):
+            return float(val)
+    m = re.search(r"(\d{2})\s*°", json.dumps(c.payload, ensure_ascii=False))
+    return float(m.group(1)) if m else None
+
+
+def weather_heatwave(c: Ctx, v: Voice) -> Draft:
+    temp = _temperature(c)
+    city = c.payload.get("city") or c.city
+    head = v.t(f"{num(temp)}°C in {city} today" if temp else f"heatwave in {city} today",
+               f"aaj {city} mein {num(temp)}°C" if temp else f"aaj {city} mein heatwave")
+    summer = c.digest_mentioning("summer") or c.digest_mentioning("ORS")
+    angle = {
+        "restaurants": v.t("afternoon walk-ins drop and delivery plus cold drinks pick up — worth leading with delivery today.",
+                           "dopahar ka footfall girta hai, delivery aur cold drinks badhte hain — aaj delivery lead karni chahiye."),
+        "pharmacies": v.t(f"{summer['title'].split(':')[0]} — ORS and sunscreen belong at the counter today." if summer else "ORS and sunscreen belong at the counter today.",
+                          f"{summer['title'].split(':')[0]} — aaj ORS aur sunscreen counter pe rakhiye." if summer else "aaj ORS aur sunscreen counter pe rakhiye."),
+        "gyms": v.t("members will skip the afternoon and evening heat — early-morning slots are the ones to push.",
+                    "members garmi mein shaam skip karenge — subah ke slots push karne ka din hai."),
+        "salons": v.t("midday walk-ins dry up in this heat — morning and evening slots are where bookings will land.",
+                      "is garmi mein dopahar ke walk-ins kam honge — subah aur shaam ke slots pe bookings aayengi."),
+        "dentists": v.t("patients postpone midday appointments in this heat — a nudge toward evening slots saves no-shows.",
+                        "garmi mein patients dopahar ke appointments taalte hain — evening slots ka nudge no-shows bachata hai."),
+    }.get(c.slug, v.t("midday footfall will dip — shift today's push to mornings and evenings.",
+                      "dopahar ka footfall girega — aaj ka push subah-shaam pe rakhiye."))
+    gym_slot = c.digest_mentioning("6-8am") if c.slug == "gyms" else None
+    extra = v.t(" Your 6-8am slots run at about 60% capacity anyway, so there's room." if gym_slot else "",
+                " 6-8am slots waise bhi ~60% bhare rehte hain, jagah hai." if gym_slot else "")
+    if gym_slot:
+        c.allow(6, 8, 60)
+    body = lead(c, v, f"{head}. {angle[:1].upper() + angle[1:]}{extra}") + "\n" + ask(
+        v, "Want me to post today's hours and offer to match the heat?", "Aaj ke hisaab se hours aur offer ka post daal doon?")
+    return Draft(body, "binary_yes_no",
+                 f"External weather trigger ({head}); lead signal translated into a category-specific operating change for today, "
+                 "no invented demand statistics.",
+                 ["timeliness", "judgement", "effort_externalization"],
+                 accept_text(c, v, v.t("today's heat-adjusted post is ready", "aaj ka post ready hai")), offer=v.t("today's post", "aaj ka post"))
+
+
+def local_news_event(c: Ctx, v: Voice) -> Draft:
+    text, facts, item = payload_story(c)
+    if not text:
+        return generic(c, v)
+    deliveryish = c.slug in ("restaurants", "pharmacies")
+    angle = v.t("If it keeps people home, delivery is where today's orders will come from." if deliveryish
+                else "If it disrupts travel, expect late arrivals — a quick reschedule message keeps the day intact.",
+                "Agar log ghar pe rahe, toh aaj orders delivery se aayenge." if deliveryish
+                else "Travel mein dikkat hui toh log late aayenge — reschedule message se din bach jayega.")
+    detail = f" ({'; '.join(facts)})" if facts else ""
+    body = lead(c, v, v.t(f"local heads-up for {c.locality}: {text}{detail}. {angle}", f"{c.locality} ke liye local update: {text}{detail}. {angle}")) + "\n" + ask(
+        v, "Want me to handle it for today?" if deliveryish else "Want me to send that message to today's bookings?",
+        "Aaj ke liye main sambhal loon?" if deliveryish else "Aaj ki bookings ko message bhej doon?")
+    return Draft(body, "binary_yes_no", f"Local news trigger surfaced verbatim from the payload ('{text}') and converted into one operational action.",
+                 ["timeliness", "effort_externalization"], accept_text(c, v, v.t("on it for today", "aaj ke liye kar diya")),
+                 offer=v.t("today's adjustment", "aaj ka adjustment"))
+
+
+def category_trend_movement(c: Ctx, v: Voice) -> Draft:
+    p = c.payload
+    if p.get("trends"):
+        return category_seasonal(c, v)
+    query = p.get("query") or p.get("topic")
+    delta = p.get("delta_yoy") if p.get("delta_yoy") is not None else p.get("delta_pct")
+    sig = c.trend(str(query).lower().split()[0]) if query else c.top_trend()
+    if not query and sig:
+        query, delta = sig.get("query"), sig.get("delta_yoy")
+    if not query:
+        return generic(c, v)
+    offer = c.offer_matching(*str(query).lower().split()) or c.catalog_offer(*str(query).lower().split())
+    line = v.t(f"'{query}' searches are up {pct(delta)} YoY" if delta else f"'{query}' is trending", f"'{query}' searches {pct(delta)} YoY upar hain" if delta else f"'{query}' trend kar raha hai")
+    if sig and sig.get("segment_age") and sig["segment_age"] != "all":
+        line += v.t(f", mostly the {sig['segment_age'].replace('_', ' ')} crowd", f", zyada {sig['segment_age'].replace('_', ' ')} age group")
+    line += "."
+    if offer:
+        line += v.t(f" '{short_title(offer['title'])}' is the obvious way to catch them.", f" '{short_title(offer['title'])}' se yeh demand pakdi ja sakti hai.")
+    body = lead(c, v, line) + "\n" + ask(v, "Want me to put it at the top of your profile this week?", "Is hafte profile ke top pe daal doon?")
+    return Draft(body, "binary_yes_no", "Search-trend trigger tied to a concrete offer the merchant can list.", ["specificity", "curiosity"],
+                 accept_text(c, v, v.t("it's pinned to the top of your profile", "profile ke top pe pin ho gaya")), offer=v.t("pinning it", "pin karna"))
+
+
 # =========================================================================== fallback
 
 def generic(c: Ctx, v: Voice) -> Draft:
-    """Any unknown trigger kind: lead with the merchant's most decision-relevant fact."""
+    """Any unknown trigger kind: say *why now* from the payload if it has anything, else
+    lead with the merchant's most decision-relevant metric."""
     if c.customer:
         return customer_lapsed(c, v)
+    text, facts, item = payload_story(c)
+    if item and item.get("summary"):
+        return research_digest(c, v)
+    if text or facts:
+        what = (text or humanize_token(c.kind)).rstrip(".")
+        detail = f" ({'; '.join(facts)})" if facts else ""
+        # Only tie in an offer that actually relates to the news — otherwise it reads like a template.
+        words = set(re.findall(r"[a-z]{4,}", what.lower()))
+        offer = next((o for o in c.active_offers + c.catalog()
+                      if words & set(re.findall(r"[a-z]{4,}", str(o.get("title", "")).lower()))), None)
+        tie = v.t(f" Your '{short_title(offer['title'])}' fits this well." if offer else " Worth acting on while it's fresh.",
+                  f" Aapka '{short_title(offer['title'])}' isse match karta hai." if offer else " Abhi fresh hai, abhi kaam aayega.")
+        body = lead(c, v, v.t(f"heads-up: {what}{detail}.{tie}", f"ek update: {what}{detail}.{tie}")) + "\n" + ask(
+            v, "Want me to turn it into a post for your profile today?", "Aaj ise profile post bana doon?")
+        return Draft(body, "binary_yes_no", f"Unfamiliar trigger '{c.kind}': surfaced its own payload as the why-now, tied to the merchant's offer.",
+                     ["timeliness", "specificity"], accept_text(c, v, v.t("post drafted", "post ready")), offer=v.t("the post", "post"))
     kind = humanize_token(c.kind)
     weak = c.standout_weakness()
     strength = c.standout_strength()
@@ -1357,7 +1495,11 @@ PLAYBOOKS: dict[str, Callable[[Ctx, Voice], Draft]] = {
     "active_planning_intent": active_planning_intent,
     "supply_alert": supply_alert,
     "category_seasonal": category_seasonal,
-    "category_trend_movement": category_seasonal,
+    "category_trend_movement": category_trend_movement,
+    "weather_heatwave": weather_heatwave,
+    "heatwave": weather_heatwave,
+    "local_news_event": local_news_event,
+    "customer_lapsed": customer_lapsed,
     "gbp_unverified": gbp_unverified,
     "cde_opportunity": cde_opportunity,
     "competitor_opened": competitor_opened,

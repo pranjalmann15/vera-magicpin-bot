@@ -15,6 +15,7 @@ Tick planning rules (why a trigger does or doesn't become a message):
 from __future__ import annotations
 
 import concurrent.futures as cf
+import hashlib
 import logging
 import os
 import re
@@ -175,7 +176,9 @@ class VeraEngine:
         kind = cand["trigger"].get("kind", "msg")
         cust = f"_{re.sub(r'^c_\d+_', '', cand['customer_id'])[:12]}" if cand["customer_id"] else ""
         n = re.search(r"trg_(\d+)", cand["trigger_id"])
-        return f"conv_{m}_{kind}{cust}_{n.group(1) if n else abs(hash(cand['trigger_id'])) % 10000}"
+        # stable across restarts (Python's hash() is salted per process)
+        suffix = n.group(1) if n else hashlib.sha1(cand["trigger_id"].encode("utf-8")).hexdigest()[:8]
+        return f"conv_{m}_{kind}{cust}_{suffix}"
 
     def _state_from(self, conv_id: str, cand: dict, composed: Composed, ctx: Ctx) -> ConvState:
         return ConvState(

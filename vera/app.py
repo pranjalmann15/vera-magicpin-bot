@@ -48,7 +48,8 @@ def metadata():
         "team_name": os.environ.get("VERA_TEAM_NAME", "Vera Reloaded"),
         "team_members": [m.strip() for m in os.environ.get("VERA_TEAM_MEMBERS", "Pranjal Mann").split(",")],
         "model": engine.llm.name if engine.llm else "deterministic-playbooks (no LLM)",
-        "approach": ("Fact-ledger grounded playbooks per trigger kind (26 kinds) with judgement rules; optional LLM polish "
+        "approach": ("Fact-ledger grounded playbooks per trigger kind (29 kinds + payload-aware fallback for unseen kinds), "
+                     "one driving signal per message; optional LLM polish "
                      "re-validated against the ledger; deterministic multi-turn state machine for auto-reply, intent, "
                      "opt-out and off-topic handling"),
         "contact_email": os.environ.get("VERA_CONTACT_EMAIL", "set-VERA_CONTACT_EMAIL@example.com"),
