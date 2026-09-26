@@ -27,7 +27,7 @@ log = logging.getLogger("vera.llm")
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
     "openai": "gpt-4o-mini",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash-lite",  # 2.5-series is closed to new keys; lite keeps polish ~1-2s
     "groq": "llama-3.3-70b-versatile",
     "deepseek": "deepseek-chat",
     "openrouter": "anthropic/claude-sonnet-5",
@@ -101,11 +101,12 @@ class LLM:
         return r.json()["choices"][0]["message"]["content"]
 
     def _gemini(self, system: str, user: str, max_tokens: int, t: float) -> str:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        # Key goes in a header, never the URL — URLs end up in error messages and server logs.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
                 "generationConfig": {"temperature": 0, "maxOutputTokens": max_tokens}}
-        r = self._client.post(url, json=body, timeout=t)
+        r = self._client.post(url, json=body, headers={"x-goog-api-key": self.api_key}, timeout=t)
         r.raise_for_status()
         return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 

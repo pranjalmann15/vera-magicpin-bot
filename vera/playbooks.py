@@ -20,12 +20,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Callable, Optional
 
 from .context import Ctx, Voice, pretty_services
 from .textutil import (
-    IST, clock, day_month, dow_day_month, humanize_token, inr, months_between, num,
+    IST, clock, day_month, dow_day_month, humanize_token, inr, num,
     parse_date, parse_dt, pct, slot_label, squash, weeks_phrase,
 )
 
@@ -184,8 +183,8 @@ def research_digest(c: Ctx, v: Voice) -> Draft:
     seg = str(item.get("patient_segment", ""))
     hr = c.agg.get("high_risk_adult_count")
     if "high_risk" in seg and hr:
-        anchor = v.t(f" That maps directly onto the {num(hr)} high-risk adults in your patient base.",
-                     f" Aapke roster ke {num(hr)} high-risk adults pe yeh seedha lagta hai.")
+        anchor = v.t(f" Your patient records flag {num(hr)} high-risk adults — this applies to them directly.",
+                     f" Aapke patient records mein {num(hr)} high-risk adults hain — yeh seedha unpe lagta hai.")
     elif c.agg.get("total_unique_ytd"):
         anchor = v.t(f" Relevant to your {num(c.agg['total_unique_ytd'])} patients this year.",
                      f" Aapke is saal ke {num(c.agg['total_unique_ytd'])} patients ke liye relevant.")
@@ -221,7 +220,6 @@ def regulation_change(c: Ctx, v: Voice) -> Draft:
     deadline = parse_date(c.payload.get("deadline_iso")) or parse_date(item.get("title", "")[-10:])
     summary = item.get("summary", "")
     sentences = [s.strip().rstrip(".") for s in summary.split(". ") if s.strip()]
-    when = f"from {day_month(deadline)} {deadline.year}" if deadline else "soon"
     days_left = (deadline - c.today).days if deadline else None
     runway = ""
     if days_left is not None and 0 < days_left <= 45:  # only worth saying when it's genuinely close
@@ -245,7 +243,7 @@ def regulation_change(c: Ctx, v: Voice) -> Draft:
                  offer=v.t("the audit checklist", "audit checklist"))
 
 
-def perf_dip(c: Ctx, v: Voice, _from_spike: bool = False) -> Draft:
+def perf_dip(c: Ctx, v: Voice) -> Draft:
     metric = c.payload.get("metric")
     delta = c.payload.get("delta_pct")
     if metric is None or delta is None:
@@ -342,7 +340,7 @@ def perf_spike(c: Ctx, v: Voice) -> Draft:
         bd = c.best_delta()
         if not bd:
             # "Spike" flagged but every 7-day delta is negative: be straight about it.
-            return perf_dip(c, v, _from_spike=True) if c.worst_delta() else generic(c, v)
+            return perf_dip(c, v) if c.worst_delta() else generic(c, v)
         metric, delta = bd
     label = METRIC_LABEL.get(metric, metric)
     driver = c.payload.get("likely_driver")
@@ -674,7 +672,6 @@ def ipl_match_today(c: Ctx, v: Voice) -> Draft:
     mt = parse_dt(p.get("match_time_iso"))
     weeknight = p.get("is_weeknight")
     item = c.digest_item(kinds=("seasonal",)) or c.digest_mentioning("ipl")
-    when = f"{mt.astimezone(IST).strftime('%a')} {clock(mt)}" if mt else "tonight"
     lines = [v.t(f"{match} at {venue} tonight, {clock(mt) if mt else ''}.".replace(" ,", ","),
                  f"aaj raat {match}, {venue}, {clock(mt) if mt else ''}.".replace(" ,", ","))]
     bogo = c.offer_matching("buy 1", "bogo")
@@ -1107,7 +1104,9 @@ def recall_due(c: Ctx, v: Voice) -> Draft:
     service_word = {"dentists": "check-up", "salons": "touch-up", "gyms": "progress check", "pharmacies": "refill check"}.get(c.slug, "visit")
     lines = [_cust_open(c, v)]
     if last:
-        lines.append(v.t(f"Your last {'cleaning' if 'clean' in (service or '') else 'visit'} was on {day_month(last)}", f"Aapki last {'cleaning' if 'clean' in (service or '') else 'visit'} {day_month(last)} ko hui thi"))
+        what = 'cleaning' if 'clean' in (service or '') else 'visit'
+        lines.append(v.t(f"Our records show your last {what} was on {day_month(last)}",
+                         f"Hamare records ke hisaab se aapki last {what} {day_month(last)} ko hui thi"))
         lines[-1] += v.t(f" — your {service} is due now." if service else f" — time for a quick {service_word}.",
                          f" — {service} ab due hai." if service else f" — ek quick {service_word} ka time ho gaya.")
     price_offer = c.offer_matching(*(service.split()[-1:] if service else []), "clean", "check", "analysis", "consult")
@@ -1180,10 +1179,10 @@ def customer_lapsed(c: Ctx, v: Voice) -> Draft:
     lines.append(open_)
     if days:
         lines.append(v.t(f"It's been {weeks_phrase(days)} since your last session — no pressure, it happens to most of us." if c.slug == "gyms"
-                         else f"It's been {weeks_phrase(days)} since your last visit on {day_month(last)}." if last else f"It's been {weeks_phrase(days)} since your last visit.",
+                         else f"Our records show your last visit was on {day_month(last)} — {weeks_phrase(days)} ago." if last else f"It's been {weeks_phrase(days)} since your last visit.",
                          f"Last visit ko {weeks_phrase(days).replace('about ', 'lagbhag ').replace('weeks', 'hafte').replace('months', 'mahine').replace('days', 'din')} ho gaye" + (" — koi pressure nahi." if c.slug == "gyms" else ".")))
     elif last:
-        lines.append(v.t(f"We haven't seen you since {day_month(last)}.", f"{day_month(last)} ke baad aap nahi aaye."))
+        lines.append(v.t(f"Our records show your last visit was on {day_month(last)}.", f"Hamare records mein aapki last visit {day_month(last)} ki hai."))
     if focus and months_member:
         lines.append(v.t(f"You put in {months_member} solid months on {focus} — restarting is easier than starting over.",
                          f"Aapne {months_member} mahine {focus} pe mehnat ki thi — dobara shuru karna naye se shuru karne se aasaan hai."))
@@ -1392,7 +1391,7 @@ def weather_heatwave(c: Ctx, v: Voice) -> Draft:
 
 
 def local_news_event(c: Ctx, v: Voice) -> Draft:
-    text, facts, item = payload_story(c)
+    text, facts, _ = payload_story(c)
     if not text:
         return generic(c, v)
     deliveryish = c.slug in ("restaurants", "pharmacies")

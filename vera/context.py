@@ -249,7 +249,10 @@ class Ctx:
 
     @property
     def signoff_name(self) -> str:
-        """How the merchant refers to itself when messaging its own customers: the name on their board."""
+        """How the merchant refers to itself when messaging its own customers. Clinics put the
+        doctor's name first — patients book the doctor, not the signboard."""
+        if self.is_doctor and self.owner and self.owner.lower() not in self.biz.lower():
+            return f"Dr. {self.owner}'s clinic ({self.biz})"
         return self.biz
 
     @property
